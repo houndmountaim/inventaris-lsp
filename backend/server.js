@@ -315,8 +315,12 @@ app.post('/api/transactions', authenticate, async (req, res) => {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      // Ambil item dengan lock (untuk keamanan stok)
-      const item = await tx.item.findUnique({ where: { id: parseInt(item_id) } });
+      // Ambil item dengan lock (untuk keamanan stok / mencegah race condition)
+      const itemIdInt = parseInt(item_id);
+      const items = await tx.$queryRaw`
+        SELECT id, stock, name FROM items WHERE id = ${itemIdInt} FOR UPDATE
+      `;
+      const item = items[0];
       if (!item) throw { code: 'NOT_FOUND', message: 'Barang tidak ditemukan.' };
 
       if (type === 'OUT' && item.stock < qty) {

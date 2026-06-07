@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { Routes, Route, Navigate, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { apiRequest, setAuthToken, getAuthToken } from './utils/api';
 import Login from './views/Login';
-import Dashboard from './views/Dashboard';
-import Categories from './views/Categories';
-import Items from './views/Items';
-import Transactions from './views/Transactions';
-import Reports from './views/Reports';
-import Users from './views/Users';
+
+const Dashboard = lazy(() => import('./views/Dashboard'));
+const Categories = lazy(() => import('./views/Categories'));
+const Items = lazy(() => import('./views/Items'));
+const Transactions = lazy(() => import('./views/Transactions'));
+const Reports = lazy(() => import('./views/Reports'));
+const Users = lazy(() => import('./views/Users'));
 
 const NAV_ITEMS = [
   {
@@ -183,18 +184,25 @@ export default function App() {
         </header>
 
         <main className="content-container">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/categories" element={<Categories addToast={addToast} />} />
-            <Route path="/items" element={<Items addToast={addToast} />} />
-            <Route path="/transactions" element={<Transactions addToast={addToast} />} />
-            <Route path="/reports" element={<Reports addToast={addToast} />} />
-            <Route
-              path="/users"
-              element={user.role === 'Admin' ? <Users addToast={addToast} currentUser={user} /> : <Navigate to="/" replace />}
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={
+            <div className="splash-screen" style={{ position: 'relative', height: '300px', background: 'transparent' }}>
+              <div className="splash-spinner" />
+              <span>Memuat halaman...</span>
+            </div>
+          }>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/categories" element={<Categories addToast={addToast} />} />
+              <Route path="/items" element={<Items addToast={addToast} />} />
+              <Route path="/transactions" element={<Transactions addToast={addToast} />} />
+              <Route path="/reports" element={<Reports addToast={addToast} />} />
+              <Route
+                path="/users"
+                element={user.role === 'Admin' ? <Users addToast={addToast} currentUser={user} /> : <Navigate to="/" replace />}
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
 

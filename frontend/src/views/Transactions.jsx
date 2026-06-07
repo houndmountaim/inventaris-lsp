@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { apiRequest } from '../utils/api';
 
 export default function Transactions({ addToast }) {
@@ -113,9 +113,11 @@ export default function Transactions({ addToast }) {
     finally { setSubmitting(false); }
   };
 
-  const filteredTrans = transactions.filter(t =>
-    (t.item_name + t.item_code + t.operator_name + (t.notes || '')).toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredTrans = useMemo(() => {
+    return transactions.filter(t =>
+      (t.item_name + t.item_code + t.operator_name + (t.notes || '')).toLowerCase().includes(search.toLowerCase())
+    );
+  }, [transactions, search]);
 
   return (
     <div>

@@ -46,6 +46,7 @@ model Item {
   transactions Transaction[]
 
   @@map("items")
+  @@index([category_id])
 }
 
 model Transaction {
@@ -61,4 +62,8 @@ model Transaction {
   user       User     @relation(fields: [user_id], references: [id], onDelete: Restrict)
 
   @@map("transactions")
+  @@index([item_id])
+  @@index([user_id])
+  @@index([date])
+  @@index([created_at])
 }

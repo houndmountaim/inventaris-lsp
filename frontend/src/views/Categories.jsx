@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { apiRequest } from '../utils/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 
@@ -86,10 +86,12 @@ export default function Categories({ addToast }) {
     finally { setConfirmDelete(null); }
   };
 
-  const filtered = categories.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.description || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    return categories.filter(c =>
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.description || '').toLowerCase().includes(search.toLowerCase())
+    );
+  }, [categories, search]);
 
   return (
     <div>

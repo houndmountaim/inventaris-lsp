@@ -16,7 +16,7 @@ export default defineConfig({
     proxy: {
       // All /api/* requests are forwarded to the Express backend
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false
       }
@@ -25,6 +25,15 @@ export default defineConfig({
 
   build: {
     outDir: path.resolve(__dirname, '../dist'),
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            return 'vendor';
+          }
+        }
+      }
+    }
   }
 })

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { apiRequest } from '../utils/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 
@@ -153,11 +153,13 @@ export default function Items({ addToast }) {
     finally { setConfirmDelete(null); }
   };
 
-  const filtered = items.filter(item => {
-    const s = (item.name + item.code).toLowerCase().includes(search.toLowerCase());
-    const c = !selectedCategory || String(item.category_id) === String(selectedCategory);
-    return s && c;
-  });
+  const filtered = useMemo(() => {
+    return items.filter(item => {
+      const s = (item.name + item.code).toLowerCase().includes(search.toLowerCase());
+      const c = !selectedCategory || String(item.category_id) === String(selectedCategory);
+      return s && c;
+    });
+  }, [items, search, selectedCategory]);
 
   return (
     <div>
