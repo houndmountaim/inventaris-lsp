@@ -86,7 +86,7 @@ body {
 .sidebar-logo h1 {
   font-size: 1.05rem; font-weight: 800; letter-spacing: -0.3px;
   background: linear-gradient(135deg, #fff 30%, var(--text-secondary));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 
 .sidebar-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; overflow-y: auto; }
@@ -380,7 +380,8 @@ body {
 /* ─── Print ──────────────────────────────────────────────────────────────────── */
 @media print {
   body { background: white !important; color: black !important; font-size: 11pt; }
-  .sidebar, .topbar, .btn, .filter-bar, .tab-nav, .modal-overlay, .toast-container { display: none !important; }
+  .sidebar, .topbar, .btn, .filter-bar, .tab-nav, .modal-overlay, .toast-container,
+  #btn-export-excel, #btn-print-report { display: none !important; }
   .main-wrapper { margin-left: 0 !important; }
   .content-container { padding: 0 !important; }
   .card { background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; margin-bottom: 24px !important; }
@@ -390,5 +391,6 @@ body {
   .print-header { display: block !important; text-align: center; margin-bottom: 28px; border-bottom: 2px solid #333; padding-bottom: 12px; }
   .print-header h1 { font-size: 18pt; margin-bottom: 4px; }
   .print-header p { font-size: 10pt; color: #555; }
+  .print-footer { display: block !important; text-align: center; margin-top: 28px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 9pt; color: #666; }
 }
 .print-header { display: none; }

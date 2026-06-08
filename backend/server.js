@@ -2,14 +2,31 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const crypto = require('node:crypto');
+const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { prisma, hashPassword, SALT } = require('./models');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ─── Middleware ────────────────────────────────────────────────────────────────
+// ─── Security & Performance Middleware ────────────────────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false, // Frontend di port berbeda, disable CSP strict
+}));
+app.use(compression()); // gzip semua response JSON
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // Batas ukuran request body
+
+// ─── Rate Limiting (Brute-force protection pada login) ─────────────────────────
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 menit
+  max: 10,                   // Maks 10 percobaan per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Terlalu banyak percobaan login. Coba lagi 15 menit kemudian.' },
+});
 
 // ─── Token Utilities ───────────────────────────────────────────────────────────
 const signToken = (payload) => {
@@ -79,11 +96,11 @@ const mapTransaction = (t) => ({
 });
 
 // ─── AUTH ──────────────────────────────────────────────────────────────────────
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res, next) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username dan password wajib diisi.' });
+  if (!username?.trim() || !password) return res.status(400).json({ error: 'Username dan password wajib diisi.' });
   try {
-    const user = await prisma.user.findUnique({ where: { username } });
+    const user = await prisma.user.findUnique({ where: { username: username.trim() } });
     if (!user || user.password !== hashPassword(password)) {
       return res.status(400).json({ error: 'Username atau password salah.' });
     }
@@ -93,9 +110,7 @@ app.post('/api/auth/login', async (req, res) => {
       token,
       user: { id: user.id, username: user.username, name: user.name, role: user.role },
     });
-  } catch (err) {
-    res.status(500).json({ error: 'Kesalahan server: ' + err.message });
-  }
+  } catch (err) { next(err); }
 });
 
 app.get('/api/auth/me', authenticate, (req, res) => {
@@ -103,47 +118,49 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 });
 
 // ─── USERS ─────────────────────────────────────────────────────────────────────
-app.get('/api/users', authenticate, adminOnly, async (req, res) => {
+app.get('/api/users', authenticate, adminOnly, async (req, res, next) => {
   try {
     const users = await prisma.user.findMany({
       select: { id: true, username: true, name: true, role: true, created_at: true },
       orderBy: { name: 'asc' },
     });
     res.json(users);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { next(err); }
 });
 
-app.get('/api/users/count', authenticate, async (req, res) => {
+app.get('/api/users/count', authenticate, async (req, res, next) => {
   try {
     const count = await prisma.user.count();
     res.json({ count });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { next(err); }
 });
 
-app.post('/api/users', authenticate, adminOnly, async (req, res) => {
+app.post('/api/users', authenticate, adminOnly, async (req, res, next) => {
   const { username, password, name, role } = req.body;
-  if (!username || !password || !name || !role) return res.status(400).json({ error: 'Semua field wajib diisi.' });
+  if (!username?.trim() || !password || !name?.trim() || !role) {
+    return res.status(400).json({ error: 'Semua field wajib diisi.' });
+  }
   try {
     await prisma.user.create({
       data: {
         username: username.trim(),
         password: hashPassword(password),
-        name: name.trim(),
+        name:     name.trim(),
         role,
       },
     });
     res.status(201).json({ message: 'Pengguna berhasil ditambahkan.' });
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Username sudah digunakan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-app.put('/api/users/:id', authenticate, adminOnly, async (req, res) => {
+app.put('/api/users/:id', authenticate, adminOnly, async (req, res, next) => {
   const { username, name, role, password } = req.body;
-  if (!username || !name || !role) return res.status(400).json({ error: 'Username, Nama, dan Role wajib diisi.' });
+  if (!username?.trim() || !name?.trim() || !role) {
+    return res.status(400).json({ error: 'Username, Nama, dan Role wajib diisi.' });
+  }
   try {
     const updateData = { username: username.trim(), name: name.trim(), role };
     if (password) updateData.password = hashPassword(password);
@@ -155,89 +172,93 @@ app.put('/api/users/:id', authenticate, adminOnly, async (req, res) => {
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Username sudah digunakan.' });
     if (err.code === 'P2025') return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-app.delete('/api/users/:id', authenticate, adminOnly, async (req, res) => {
-  if (parseInt(req.params.id) === req.user.id) return res.status(400).json({ error: 'Tidak dapat menghapus akun Anda sendiri.' });
+app.delete('/api/users/:id', authenticate, adminOnly, async (req, res, next) => {
+  if (parseInt(req.params.id) === req.user.id) {
+    return res.status(400).json({ error: 'Tidak dapat menghapus akun Anda sendiri.' });
+  }
   try {
     await prisma.user.delete({ where: { id: parseInt(req.params.id) } });
     res.json({ message: 'Pengguna berhasil dihapus.' });
   } catch (err) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // ─── CATEGORIES ────────────────────────────────────────────────────────────────
-app.get('/api/categories', authenticate, async (req, res) => {
+app.get('/api/categories', authenticate, async (req, res, next) => {
   try {
     const categories = await prisma.category.findMany({ orderBy: { name: 'asc' } });
     res.json(categories);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { next(err); }
 });
 
-app.post('/api/categories', authenticate, async (req, res) => {
+app.post('/api/categories', authenticate, async (req, res, next) => {
   const { name, description } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nama kategori wajib diisi.' });
+  if (!name?.trim()) return res.status(400).json({ error: 'Nama kategori wajib diisi.' });
   try {
     await prisma.category.create({
-      data: { name: name.trim(), description: description || '' },
+      data: { name: name.trim(), description: description?.trim() || '' },
     });
     res.status(201).json({ message: 'Kategori berhasil ditambahkan.' });
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Nama kategori sudah ada.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-app.put('/api/categories/:id', authenticate, async (req, res) => {
+app.put('/api/categories/:id', authenticate, async (req, res, next) => {
   const { name, description } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nama kategori wajib diisi.' });
+  if (!name?.trim()) return res.status(400).json({ error: 'Nama kategori wajib diisi.' });
   try {
     await prisma.category.update({
       where: { id: parseInt(req.params.id) },
-      data: { name: name.trim(), description: description || '' },
+      data: { name: name.trim(), description: description?.trim() || '' },
     });
     res.json({ message: 'Kategori berhasil diperbarui.' });
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Nama kategori sudah ada.' });
     if (err.code === 'P2025') return res.status(404).json({ error: 'Kategori tidak ditemukan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-app.delete('/api/categories/:id', authenticate, async (req, res) => {
+app.delete('/api/categories/:id', authenticate, async (req, res, next) => {
   try {
     await prisma.category.delete({ where: { id: parseInt(req.params.id) } });
     res.json({ message: 'Kategori berhasil dihapus.' });
   } catch (err) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Kategori tidak ditemukan.' });
     if (err.code === 'P2003') return res.status(400).json({ error: 'Kategori tidak dapat dihapus karena masih memiliki barang.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // ─── ITEMS ─────────────────────────────────────────────────────────────────────
-app.get('/api/items', authenticate, async (req, res) => {
+app.get('/api/items', authenticate, async (req, res, next) => {
   try {
     const items = await prisma.item.findMany({
       include: { category: { select: { name: true } } },
       orderBy: { name: 'asc' },
     });
     res.json(items.map(mapItem));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { next(err); }
 });
 
-app.post('/api/items', authenticate, async (req, res) => {
+app.post('/api/items', authenticate, async (req, res, next) => {
   const { category_id, code, name, stock, min_stock, unit, price } = req.body;
-  if (!category_id || !code || !name || !unit) return res.status(400).json({ error: 'Kategori, Kode, Nama, dan Satuan wajib diisi.' });
+  if (!category_id || !code?.trim() || !name?.trim() || !unit?.trim()) {
+    return res.status(400).json({ error: 'Kategori, Kode, Nama, dan Satuan wajib diisi.' });
+  }
   try {
     await prisma.item.create({
       data: {
         category_id: parseInt(category_id),
-        code:        code.trim(),
+        code:        code.trim().toUpperCase(),
         name:        name.trim(),
         stock:       parseInt(stock) || 0,
         min_stock:   parseInt(min_stock) || 0,
@@ -248,19 +269,21 @@ app.post('/api/items', authenticate, async (req, res) => {
     res.status(201).json({ message: 'Barang berhasil ditambahkan.' });
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Kode barang sudah digunakan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-app.put('/api/items/:id', authenticate, async (req, res) => {
+app.put('/api/items/:id', authenticate, async (req, res, next) => {
   const { category_id, code, name, min_stock, unit, price } = req.body;
-  if (!category_id || !code || !name || !unit) return res.status(400).json({ error: 'Kategori, Kode, Nama, dan Satuan wajib diisi.' });
+  if (!category_id || !code?.trim() || !name?.trim() || !unit?.trim()) {
+    return res.status(400).json({ error: 'Kategori, Kode, Nama, dan Satuan wajib diisi.' });
+  }
   try {
     await prisma.item.update({
       where: { id: parseInt(req.params.id) },
       data: {
         category_id: parseInt(category_id),
-        code:        code.trim(),
+        code:        code.trim().toUpperCase(),
         name:        name.trim(),
         min_stock:   parseInt(min_stock) || 0,
         unit:        unit.trim(),
@@ -271,11 +294,11 @@ app.put('/api/items/:id', authenticate, async (req, res) => {
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Kode barang sudah digunakan.' });
     if (err.code === 'P2025') return res.status(404).json({ error: 'Barang tidak ditemukan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-app.delete('/api/items/:id', authenticate, async (req, res) => {
+app.delete('/api/items/:id', authenticate, async (req, res, next) => {
   const itemId = parseInt(req.params.id);
   try {
     await prisma.$transaction(async (tx) => {
@@ -285,29 +308,29 @@ app.delete('/api/items/:id', authenticate, async (req, res) => {
     res.json({ message: 'Barang beserta riwayat transaksinya berhasil dihapus.' });
   } catch (err) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Barang tidak ditemukan.' });
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
 // ─── TRANSACTIONS ──────────────────────────────────────────────────────────────
-app.get('/api/transactions', authenticate, async (req, res) => {
+app.get('/api/transactions', authenticate, async (req, res, next) => {
   try {
     const txs = await prisma.transaction.findMany({
       include: {
-        item: {
-          include: { category: { select: { name: true } } },
-        },
+        item: { include: { category: { select: { name: true } } } },
         user: { select: { name: true } },
       },
       orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
     });
     res.json(txs.map(mapTransaction));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { next(err); }
 });
 
-app.post('/api/transactions', authenticate, async (req, res) => {
+app.post('/api/transactions', authenticate, async (req, res, next) => {
   const { item_id, type, quantity, date, notes } = req.body;
-  if (!item_id || !type || !quantity || !date) return res.status(400).json({ error: 'Barang, Tipe, Jumlah, dan Tanggal wajib diisi.' });
+  if (!item_id || !type || !quantity || !date) {
+    return res.status(400).json({ error: 'Barang, Tipe, Jumlah, dan Tanggal wajib diisi.' });
+  }
 
   const qty = parseInt(quantity);
   if (isNaN(qty) || qty <= 0) return res.status(400).json({ error: 'Jumlah harus lebih dari 0.' });
@@ -315,7 +338,7 @@ app.post('/api/transactions', authenticate, async (req, res) => {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      // Ambil item dengan lock (untuk keamanan stok / mencegah race condition)
+      // Ambil item dengan lock untuk mencegah race condition stok
       const itemIdInt = parseInt(item_id);
       const items = await tx.$queryRaw`
         SELECT id, stock, name FROM items WHERE id = ${itemIdInt} FOR UPDATE
@@ -332,22 +355,17 @@ app.post('/api/transactions', authenticate, async (req, res) => {
 
       const newStock = type === 'IN' ? item.stock + qty : item.stock - qty;
 
-      await tx.item.update({
-        where: { id: parseInt(item_id) },
-        data: { stock: newStock },
-      });
-
+      await tx.item.update({ where: { id: itemIdInt }, data: { stock: newStock } });
       await tx.transaction.create({
         data: {
-          item_id:  parseInt(item_id),
+          item_id:  itemIdInt,
           user_id:  req.user.id,
           type,
           quantity: qty,
           date:     new Date(date),
-          notes:    notes || '',
+          notes:    notes?.trim() || '',
         },
       });
-
       return newStock;
     });
 
@@ -355,48 +373,46 @@ app.post('/api/transactions', authenticate, async (req, res) => {
   } catch (err) {
     if (err.code === 'NOT_FOUND')          return res.status(404).json({ error: err.message });
     if (err.code === 'INSUFFICIENT_STOCK') return res.status(400).json({ error: err.message });
-    res.status(500).json({ error: 'Transaksi gagal: ' + err.message });
+    next(err);
   }
 });
 
 // ─── DASHBOARD ─────────────────────────────────────────────────────────────────
-app.get('/api/dashboard/stats', authenticate, async (req, res) => {
+app.get('/api/dashboard/stats', authenticate, async (req, res, next) => {
   try {
-    const [itemCount, catCount, txCount] = await Promise.all([
+    // Jalankan semua query ringan secara paralel
+    const [itemCount, catCount, txCount, stockValueResult] = await Promise.all([
       prisma.item.count(),
       prisma.category.count(),
       prisma.transaction.count(),
+      prisma.$queryRaw`SELECT COALESCE(SUM(stock * price), 0) AS total FROM items`,
     ]);
 
-    // Nilai total stok = SUM(stock * price)
-    const stockValueResult = await prisma.$queryRaw`
-      SELECT COALESCE(SUM(stock * price), 0) AS total FROM items
-    `;
     const stockValue = parseFloat(stockValueResult[0]?.total) || 0;
 
-    // Barang dengan stok di bawah minimum (perbandingan 2 kolom → harus raw query)
+    // Barang dengan stok di bawah atau sama dengan minimum (logika baru: Tidak Tersedia + Warning)
     const lowStockAlertsRaw = await prisma.$queryRaw`
       SELECT i.id, i.category_id, i.code, i.name, i.stock, i.min_stock, i.unit,
              CAST(i.price AS CHAR) AS price, i.created_at, c.name AS category_name
       FROM items i
       LEFT JOIN categories c ON i.category_id = c.id
-      WHERE i.stock < i.min_stock
+      WHERE i.stock <= i.min_stock
       ORDER BY i.stock ASC
     `;
 
-    // 5 barang stok terendah
-    const lowStock = await prisma.item.findMany({
-      select: { name: true, stock: true },
-      orderBy: { stock: 'asc' },
-      take: 5,
-    });
-
-    // 5 barang stok tertinggi
-    const highStock = await prisma.item.findMany({
-      select: { name: true, stock: true },
-      orderBy: { stock: 'desc' },
-      take: 5,
-    });
+    // 5 barang stok terendah & tertinggi – diambil paralel
+    const [lowStock, highStock] = await Promise.all([
+      prisma.item.findMany({
+        select: { name: true, stock: true, min_stock: true },
+        orderBy: { stock: 'asc' },
+        take: 5,
+      }),
+      prisma.item.findMany({
+        select: { name: true, stock: true },
+        orderBy: { stock: 'desc' },
+        take: 5,
+      }),
+    ]);
 
     res.json({
       counts: { items: itemCount, categories: catCount, transactions: txCount, stockValue },
@@ -414,15 +430,13 @@ app.get('/api/dashboard/stats', authenticate, async (req, res) => {
       })),
       charts: { lowStock, highStock },
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { next(err); }
 });
 
-
 // ─── REPORTS ───────────────────────────────────────────────────────────────────
-app.get('/api/reports', authenticate, async (req, res) => {
+app.get('/api/reports', authenticate, async (req, res, next) => {
   const { startDate, endDate, type, categoryId } = req.query;
   try {
-    // Build filter transaksi
     const txWhere = {};
     if (startDate && endDate) {
       txWhere.date = { gte: new Date(startDate), lte: new Date(endDate) };
@@ -433,28 +447,32 @@ app.get('/api/reports', authenticate, async (req, res) => {
     }
     if (type && type !== 'ALL') txWhere.type = type;
 
-    // Filter barang berdasarkan kategori
-    const itemWhere = {};
-    if (categoryId) itemWhere.category_id = parseInt(categoryId);
+    const catFilter = categoryId ? { category_id: parseInt(categoryId) } : {};
 
-    const txs = await prisma.transaction.findMany({
-      where: {
-        ...txWhere,
-        ...(categoryId ? { item: { is: { category_id: parseInt(categoryId) } } } : {}),
-      },
-      include: {
-        item: {
-          include: { category: { select: { name: true } } },
+    // Jalankan query transaksi & stok secara paralel
+    const [txs, stockItems] = await Promise.all([
+      prisma.transaction.findMany({
+        where: {
+          ...txWhere,
+          ...(categoryId ? { item: { is: catFilter } } : {}),
         },
-        user: { select: { name: true } },
-      },
-      orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
-    });
+        include: {
+          item: { include: { category: { select: { name: true } } } },
+          user: { select: { name: true } },
+        },
+        orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
+      }),
+      prisma.item.findMany({
+        where: catFilter,
+        include: { category: { select: { name: true } } },
+        orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
+      }),
+    ]);
 
     const transactions = txs.map(mapTransaction);
 
     let totalQtyIn = 0, totalQtyOut = 0, totalValueIn = 0, totalValueOut = 0;
-    transactions.forEach((t) => {
+    for (const t of transactions) {
       if (t.type === 'IN') {
         totalQtyIn  += t.quantity;
         totalValueIn += t.quantity * t.item_price;
@@ -462,14 +480,7 @@ app.get('/api/reports', authenticate, async (req, res) => {
         totalQtyOut  += t.quantity;
         totalValueOut += t.quantity * t.item_price;
       }
-    });
-
-    // Stock report (semua barang dengan filter kategori jika ada)
-    const stockItems = await prisma.item.findMany({
-      where: categoryId ? { category_id: parseInt(categoryId) } : {},
-      include: { category: { select: { name: true } } },
-      orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
-    });
+    }
 
     const stockReport = stockItems.map((i) => ({
       item_code:     i.code,
@@ -486,7 +497,14 @@ app.get('/api/reports', authenticate, async (req, res) => {
       summary: { totalQtyIn, totalQtyOut, totalValueIn, totalValueOut, recordCount: transactions.length },
       stockReport,
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { next(err); }
+});
+
+// ─── Global Error Handler ──────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err);
+  res.status(500).json({ error: 'Terjadi kesalahan pada server: ' + (err.message || 'Unknown error') });
 });
 
 // ─── Start Server ──────────────────────────────────────────────────────────────

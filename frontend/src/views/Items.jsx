@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { apiRequest } from '../utils/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 
@@ -18,45 +18,49 @@ export default function Items({ addToast }) {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
-  const [userCount, setUserCount] = useState(5);
-  const [alertOpen, setAlertOpen] = useState(false);
+
+  // ── Debounce search 300ms ────────────────────────────────────────────────
+  const [searchInput, setSearchInput] = useState('');
+  const debounceTimer = useRef(null);
+  const handleSearchChange = useCallback((e) => {
+    const val = e.target.value;
+    setSearchInput(val);
+    clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => setSearch(val), 300);
+  }, []);
+  useEffect(() => () => clearTimeout(debounceTimer.current), []);
+
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [i, c, uc] = await Promise.all([
+      const [i, c] = await Promise.all([
         apiRequest('/api/items'),
         apiRequest('/api/categories'),
-        apiRequest('/api/users/count').catch(() => ({ count: 5 }))
       ]);
       setItems(i);
       setCategories(c);
-      setUserCount(uc.count);
     } catch (e) { addToast(e.message, 'danger'); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { fetchData(); }, []);
 
-  const openAddModal = () => {
-    if (userCount < 5) {
-      setAlertOpen(true);
-      return;
-    }
+  const openAddModal = useCallback(() => {
     setEditingItem(null);
     setFormData({ code: '', name: '', category_id: String(categories[0]?.id || ''), stock: '0', min_stock: '10', unit: 'pcs', price: '0' });
     setModalError('');
     setErrors({});
     setModalOpen(true);
-  };
+  }, [categories]);
 
-  const openEditModal = (item) => {
+  const openEditModal = useCallback((item) => {
     setEditingItem(item);
     setFormData({ code: item.code, name: item.name, category_id: String(item.category_id), stock: String(item.stock), min_stock: String(item.min_stock), unit: item.unit, price: String(item.price) });
     setModalError('');
     setErrors({});
     setModalOpen(true);
-  };
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -66,10 +70,6 @@ export default function Items({ addToast }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!editingItem && userCount < 5) {
-      setAlertOpen(true);
-      return;
-    }
     const { code, name, category_id, stock, min_stock, unit, price } = formData;
 
     const newErrors = {};
@@ -143,7 +143,7 @@ export default function Items({ addToast }) {
     finally { setSubmitting(false); }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = useCallback(async () => {
     if (!confirmDelete) return;
     try {
       await apiRequest(`/api/items/${confirmDelete.id}`, { method: 'DELETE' });
@@ -151,7 +151,7 @@ export default function Items({ addToast }) {
       fetchData();
     } catch (e) { addToast(e.message, 'danger'); }
     finally { setConfirmDelete(null); }
-  };
+  }, [confirmDelete, addToast]);
 
   const filtered = useMemo(() => {
     return items.filter(item => {
@@ -167,7 +167,7 @@ export default function Items({ addToast }) {
         <div className="filter-inputs">
           <input
             type="text" className="form-control" placeholder="Cari kode atau nama..."
-            value={search} onChange={e => setSearch(e.target.value)}
+            value={searchInput} onChange={handleSearchChange}
             style={{ maxWidth: '230px' }}
           />
           <select
@@ -192,32 +192,31 @@ export default function Items({ addToast }) {
 
       {/* ── Banner Peringatan Stok ──────────────────────────────────────── */}
       {(() => {
-        const habis   = items.filter(i => i.stock === 0);
-        const tipis   = items.filter(i => i.stock > 0 && i.stock < i.min_stock);
-        const lt10    = items.filter(i => i.stock > 0 && i.stock < 10 && i.stock >= i.min_stock);
-        if (habis.length === 0 && tipis.length === 0 && lt10.length === 0) return null;
+        const tidakTersedia = items.filter(i => i.stock < i.min_stock);
+        const warning       = items.filter(i => i.stock === i.min_stock);
+        if (tidakTersedia.length === 0 && warning.length === 0) return null;
         return (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
-            {habis.length > 0 && (
+            {tidakTersedia.length > 0 && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)',
                 borderRadius: 'var(--radius-md)', padding: '10px 16px', flex: '1', minWidth: '200px',
               }}>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="var(--danger)" style={{ width: '20px', height: '20px', flexShrink: 0 }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
                 <div>
                   <div style={{ fontWeight: '700', fontSize: '0.85rem', color: 'var(--danger)' }}>
-                    {habis.length} Barang Stok Habis
+                    {tidakTersedia.length} Barang Tidak Tersedia (stok di bawah minimum)
                   </div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '1px' }}>
-                    {habis.slice(0, 3).map(i => i.name).join(', ')}{habis.length > 3 ? ` +${habis.length - 3} lainnya` : ''}
+                    {tidakTersedia.slice(0, 3).map(i => i.name).join(', ')}{tidakTersedia.length > 3 ? ` +${tidakTersedia.length - 3} lainnya` : ''}
                   </div>
                 </div>
               </div>
             )}
-            {tipis.length > 0 && (
+            {warning.length > 0 && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)',
@@ -228,29 +227,10 @@ export default function Items({ addToast }) {
                 </svg>
                 <div>
                   <div style={{ fontWeight: '700', fontSize: '0.85rem', color: 'var(--warning)' }}>
-                    {tipis.length} Barang Stok Tipis (di bawah minimum)
+                    {warning.length} Barang Warning (stok sama dengan minimum)
                   </div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '1px' }}>
-                    {tipis.slice(0, 3).map(i => i.name).join(', ')}{tipis.length > 3 ? ` +${tipis.length - 3} lainnya` : ''}
-                  </div>
-                </div>
-              </div>
-            )}
-            {lt10.length > 0 && (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)',
-                borderRadius: 'var(--radius-md)', padding: '10px 16px', flex: '1', minWidth: '200px',
-              }}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="var(--warning)" style={{ width: '20px', height: '20px', flexShrink: 0, opacity: 0.7 }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.083.87l-.512 1.902a.75.75 0 00.954.91l.04-.017M12 6.75h.008v.008H12V6.75zM21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div>
-                  <div style={{ fontWeight: '700', fontSize: '0.85rem', color: 'var(--warning)', opacity: 0.8 }}>
-                    {lt10.length} Barang Stok &lt; 10
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '1px' }}>
-                    Perlu diperhatikan sebelum habis
+                    {warning.slice(0, 3).map(i => i.name).join(', ')}{warning.length > 3 ? ` +${warning.length - 3} lainnya` : ''}
                   </div>
                 </div>
               </div>
@@ -294,44 +274,40 @@ export default function Items({ addToast }) {
               </thead>
               <tbody>
                 {filtered.map(item => {
-                  const isHabis  = item.stock === 0;
-                  const isTipis  = !isHabis && item.stock < item.min_stock;
-                  const isLt10   = !isHabis && !isTipis && item.stock < 10;
-                  const isAman   = !isHabis && !isTipis && !isLt10;
+                  // Logika status persediaan:
+                  // Tersedia   : stok > min_stock
+                  // Warning    : stok === min_stock
+                  // Tidak Tersedia : stok < min_stock
+                  const isTidakTersedia = item.stock < item.min_stock;
+                  const isWarning       = item.stock === item.min_stock;
+                  const isTersedia      = item.stock > item.min_stock;
 
                   // Warna baris
-                  const rowBg = isHabis
+                  const rowBg = isTidakTersedia
                     ? 'rgba(239,68,68,0.05)'
-                    : isTipis
+                    : isWarning
                     ? 'rgba(245,158,11,0.05)'
-                    : isLt10
-                    ? 'rgba(245,158,11,0.025)'
                     : 'transparent';
 
                   // Warna angka stok
-                  const stockColor = isHabis ? 'var(--danger)'
-                    : isTipis || isLt10 ? 'var(--warning)'
-                    : 'var(--text-primary)';
+                  const stockColor = isTidakTersedia ? 'var(--danger)'
+                    : isWarning ? 'var(--warning)'
+                    : 'var(--success)';
 
                   // Badge status
-                  const badge = isHabis
+                  const badge = isTidakTersedia
                     ? <span className="badge badge-pulse-danger">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" style={{ width: '11px', height: '11px' }}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                        Habis
+                        Tidak Tersedia
                       </span>
-                    : isTipis
+                    : isWarning
                     ? <span className="badge badge-pulse-warning">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" style={{ width: '11px', height: '11px' }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                        Tipis
-                      </span>
-                    : isLt10
-                    ? <span className="badge badge-warning">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" style={{ width: '11px', height: '11px' }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                        &lt; 10
+                        Warning
                       </span>
                     : <span className="badge badge-success">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" style={{ width: '11px', height: '11px' }}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                        Aman
+                        Tersedia
                       </span>;
 
                   return (
@@ -339,8 +315,8 @@ export default function Items({ addToast }) {
                       <td><code style={{ fontSize: '0.82rem', color: 'var(--accent-color)' }}>{item.code}</code></td>
                       <td style={{ fontWeight: '600' }}>
                         {item.name}
-                        {(isHabis || isTipis || isLt10) && (
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke={isHabis ? 'var(--danger)' : 'var(--warning)'} style={{ width: '14px', height: '14px', marginLeft: '6px', verticalAlign: 'middle', flexShrink: 0 }}>
+                        {(isTidakTersedia || isWarning) && (
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke={isTidakTersedia ? 'var(--danger)' : 'var(--warning)'} style={{ width: '14px', height: '14px', marginLeft: '6px', verticalAlign: 'middle', flexShrink: 0 }}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                           </svg>
                         )}
@@ -350,9 +326,6 @@ export default function Items({ addToast }) {
                       <td style={{ textAlign: 'right' }}>{formatRupiah(item.price)}</td>
                       <td style={{ textAlign: 'right', fontWeight: '700', color: stockColor, fontSize: '0.9rem' }}>
                         {item.stock}
-                        {isLt10 && !isTipis && (
-                          <span style={{ fontSize: '0.7rem', marginLeft: '4px', opacity: 0.7, fontWeight: '500' }}>⚠</span>
-                        )}
                       </td>
                       <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{item.min_stock}</td>
                       <td>{badge}</td>
@@ -463,31 +436,7 @@ export default function Items({ addToast }) {
         onCancel={() => setConfirmDelete(null)}
       />
 
-      {alertOpen && (
-        <div className="modal-overlay" onClick={() => setAlertOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="var(--warning)" style={{ width: '20px', height: '20px' }}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                  </svg>
-                </div>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: '700' }}>Akses Pendataan Dibatasi</h3>
-              </div>
-            </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-secondary)', lineHeight: '1.6', fontSize: '0.88rem', margin: 0 }}>
-                Minimal <strong>5 pengguna terdaftar</strong> diperlukan dalam sistem sebelum dapat melakukan penambahan barang baru.<br/><br/>
-                Jumlah pengguna terdaftar saat ini: <strong style={{ color: 'var(--warning)' }}>{userCount} / 5</strong>.
-              </p>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-primary" onClick={() => setAlertOpen(false)}>Tutup</button>
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

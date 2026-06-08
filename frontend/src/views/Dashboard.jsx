@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { apiRequest } from '../utils/api';
 
 const formatRupiah = (v) =>
@@ -28,6 +28,43 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
+  // ── Semua useMemo HARUS di sini, sebelum early return, sesuai Rules of Hooks ──
+  const COLOR_MAP = useMemo(() => ({
+    accent:  { color: 'var(--accent-color)', bg: 'rgba(99,102,241,0.12)' },
+    success: { color: 'var(--success)',       bg: 'var(--success-light)'  },
+    warning: { color: 'var(--warning)',        bg: 'var(--warning-light)' },
+    danger:  { color: 'var(--danger)',         bg: 'var(--danger-light)'  },
+  }), []);
+
+  const counts = stats?.counts || {};
+  const statCards = useMemo(() => [
+    {
+      value: counts.items ?? '—', label: 'Total Barang', color: 'accent',
+      iconD: 'M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9',
+    },
+    {
+      value: counts.categories ?? '—', label: 'Kategori', color: 'success',
+      iconD: 'M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581a1.125 1.125 0 001.591 0l4.318-4.318a1.125 1.125 0 000-1.591L9.568 3.659A2.25 2.25 0 007.977 3zM6 6h.008v.008H6V6z',
+    },
+    {
+      value: counts.transactions ?? '—', label: 'Total Transaksi', color: 'warning',
+      iconD: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
+    },
+    {
+      value: counts.stockValue != null ? formatRupiah(counts.stockValue) : '—',
+      label: 'Nilai Aset Stok', color: 'danger', small: true,
+      iconD: 'M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [stats]);
+
+  // Logika status: Tersedia (> min), Warning (= min), Tidak Tersedia (< min)
+  const getStockStatus = (stock, minStock) => {
+    if (stock > minStock)  return { label: 'Tersedia',         cls: 'badge-success' };
+    if (stock === minStock) return { label: 'Warning',         cls: 'badge-pulse-warning' };
+    return                         { label: 'Tidak Tersedia',  cls: 'badge-pulse-danger' };
+  };
+
   if (error) return <div className="alert alert-danger">{error}</div>;
 
   if (loading) {
@@ -48,33 +85,7 @@ export default function Dashboard() {
     );
   }
 
-  const { counts, lowStockAlerts, charts } = stats;
-
-  const statCards = [
-    {
-      value: counts.items, label: 'Total Barang', color: 'accent',
-      iconD: 'M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9',
-    },
-    {
-      value: counts.categories, label: 'Kategori', color: 'success',
-      iconD: 'M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581a1.125 1.125 0 001.591 0l4.318-4.318a1.125 1.125 0 000-1.591L9.568 3.659A2.25 2.25 0 007.977 3zM6 6h.008v.008H6V6z',
-    },
-    {
-      value: counts.transactions, label: 'Total Transaksi', color: 'warning',
-      iconD: 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5',
-    },
-    {
-      value: formatRupiah(counts.stockValue), label: 'Nilai Aset Stok', color: 'danger', small: true,
-      iconD: 'M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-    },
-  ];
-
-  const COLOR_MAP = {
-    accent:  { color: 'var(--accent-color)', bg: 'rgba(99,102,241,0.12)' },
-    success: { color: 'var(--success)',       bg: 'var(--success-light)'  },
-    warning: { color: 'var(--warning)',        bg: 'var(--warning-light)' },
-    danger:  { color: 'var(--danger)',         bg: 'var(--danger-light)'  },
-  };
+  const { lowStockAlerts, charts } = stats;
 
   const renderLowStockChart = () => {
     const data = charts.lowStock || [];
@@ -177,7 +188,7 @@ export default function Dashboard() {
       <div className="charts-grid">
         <div className="card">
           <div className="card-title">
-            <span>5 Stok Terendah (&lt; 10)</span>
+            <span>5 Stok Terendah (Kritis)</span>
             <span className="badge badge-pulse-warning">Perlu Restock</span>
           </div>
           {renderLowStockChart()}
@@ -225,10 +236,15 @@ export default function Dashboard() {
                     <td><code style={{ fontSize: '0.82rem', color: 'var(--accent-color)' }}>{item.code}</code></td>
                     <td style={{ fontWeight: '600' }}>{item.name}</td>
                     <td style={{ color: 'var(--text-secondary)' }}>{item.category_name}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 'bold', color: item.stock === 0 ? 'var(--danger)' : 'var(--warning)' }}>{item.stock}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold', color: item.stock < item.min_stock ? 'var(--danger)' : item.stock === item.min_stock ? 'var(--warning)' : 'var(--success)' }}>{item.stock}</td>
                     <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{item.min_stock}</td>
                     <td>{item.unit}</td>
-                    <td>{item.stock === 0 ? <span className="badge badge-pulse-danger">Habis</span> : <span className="badge badge-pulse-warning">Tipis</span>}</td>
+                    <td>
+                      {(() => {
+                        const { label, cls } = getStockStatus(item.stock, item.min_stock);
+                        return <span className={`badge ${cls}`}>{label}</span>;
+                      })()}
+                    </td>
                   </tr>
                 ))}
               </tbody>

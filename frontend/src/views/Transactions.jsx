@@ -15,8 +15,7 @@ export default function Transactions({ addToast }) {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
-  const [userCount, setUserCount] = useState(5);
-  const [alertOpen, setAlertOpen] = useState(false);
+
 
   const resetForm = () => {
     setFormData({
@@ -31,14 +30,12 @@ export default function Transactions({ addToast }) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [t, i, uc] = await Promise.all([
+      const [t, i] = await Promise.all([
         apiRequest('/api/transactions').catch(e => { console.error('Error fetch transactions:', e); return []; }),
         apiRequest('/api/items').catch(e => { console.error('Error fetch items:', e); return []; }),
-        apiRequest('/api/users/count').catch(() => ({ count: 5 })),
       ]);
       setTransactions(Array.isArray(t) ? t : []);
       setItems(Array.isArray(i) ? i : []);
-      setUserCount(uc.count);
       if (!Array.isArray(t) || !Array.isArray(i)) {
         addToast('Gagal memuat sebagian data. Coba refresh halaman.', 'warning');
       }
@@ -64,10 +61,6 @@ export default function Transactions({ addToast }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (userCount < 5) {
-      setAlertOpen(true);
-      return;
-    }
     const { item_id, type, quantity, date, notes } = formData;
 
     const newErrors = {};
@@ -79,8 +72,8 @@ export default function Transactions({ addToast }) {
     }
 
     const qty = parseInt(quantity);
-    if (quantity === '' || isNaN(qty) || qty < 10) {
-      newErrors.quantity = 'Jumlah transaksi minimal adalah 10';
+    if (quantity === '' || isNaN(qty) || qty <= 0) {
+      newErrors.quantity = 'Jumlah harus lebih dari 0';
     } else if (type === 'OUT' && selectedItem && qty > selectedItem.stock) {
       newErrors.quantity = `Stok tidak mencukupi! Maksimal: ${selectedItem.stock} ${selectedItem.unit}`;
     }
@@ -127,11 +120,7 @@ export default function Transactions({ addToast }) {
           {transactions.length > 0 && <span className="badge badge-primary" style={{ marginLeft: '8px', fontSize: '0.68rem' }}>{transactions.length}</span>}
         </button>
         <button className={`tab-btn ${activeTab === 'new' ? 'active' : ''}`} onClick={() => {
-          if (userCount < 5) {
-            setAlertOpen(true);
-          } else {
-            setActiveTab('new'); resetForm();
-          }
+          setActiveTab('new'); resetForm();
         }}>
           + Catat Transaksi Baru
         </button>
@@ -151,11 +140,7 @@ export default function Transactions({ addToast }) {
               </span>
             </div>
             <button className="btn btn-primary" onClick={() => {
-              if (userCount < 5) {
-                setAlertOpen(true);
-              } else {
-                setActiveTab('new'); resetForm();
-              }
+              setActiveTab('new'); resetForm();
             }}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" style={{ width: '17px', height: '17px' }}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -241,7 +226,7 @@ export default function Transactions({ addToast }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: '16px' }}>
                   <div>
                     <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: '2px' }}>Stok Saat Ini</span>
-                    <span style={{ fontWeight: '700', fontSize: '1.1rem', color: selectedItem.stock === 0 ? 'var(--danger)' : selectedItem.stock < selectedItem.min_stock ? 'var(--warning)' : 'var(--success)' }}>
+                    <span style={{ fontWeight: '700', fontSize: '1.1rem', color: selectedItem.stock > selectedItem.min_stock ? 'var(--success)' : selectedItem.stock === selectedItem.min_stock ? 'var(--warning)' : 'var(--danger)' }}>
                       {selectedItem.stock} {selectedItem.unit}
                     </span>
                   </div>
@@ -264,7 +249,7 @@ export default function Transactions({ addToast }) {
                 <div className="form-group">
                   <label className="form-label">Jumlah <span style={{ color: 'var(--danger)' }}>*</span></label>
                   <input
-                    type="number" name="quantity" min="10" className={`form-control ${errors.quantity ? 'is-invalid' : ''}`}
+                    type="number" name="quantity" min="1" className={`form-control ${errors.quantity ? 'is-invalid' : ''}`}
                     placeholder="0" value={formData.quantity}
                     onChange={handleInputChange} disabled={submitting}
                   />
@@ -299,31 +284,7 @@ export default function Transactions({ addToast }) {
         </div>
       )}
 
-      {alertOpen && (
-        <div className="modal-overlay" onClick={() => setAlertOpen(false)}>
-          <div className="modal-content" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="var(--warning)" style={{ width: '20px', height: '20px' }}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                  </svg>
-                </div>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: '700' }}>Akses Pendataan Dibatasi</h3>
-              </div>
-            </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-secondary)', lineHeight: '1.6', fontSize: '0.88rem', margin: 0 }}>
-                Minimal <strong>5 pengguna terdaftar</strong> diperlukan dalam sistem sebelum dapat melakukan pencatatan transaksi masuk atau keluar.<br/><br/>
-                Jumlah pengguna terdaftar saat ini: <strong style={{ color: 'var(--warning)' }}>{userCount} / 5</strong>.
-              </p>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-primary" onClick={() => setAlertOpen(false)}>Tutup</button>
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
